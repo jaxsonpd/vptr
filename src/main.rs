@@ -3,13 +3,11 @@ mod broker;
 mod data;
 mod trader;
 
-use crate::data::{AssetClass, MarketData, MarketEvent, Order, OrderType, Symbol, Side};
+use std::error::Error;
+
+use crate::data::{AlpacaData, AssetClass, DataStore, Interval, MarketData, MarketEvent, Order, OrderType, Side, Symbol};
 use crate::trader::Trader;
 use crate::backtester::Backtester;
-
-/// ======================
-/// Example strategy
-/// ======================
 
 pub struct MeanReversionTrader {
     pub target_symbol: Symbol,
@@ -58,72 +56,26 @@ impl Trader for MeanReversionTrader {
     }
 
     fn on_event(&mut self, event: MarketEvent) {
-        match event {
-            MarketEvent::OrderFilled(fill) => {
-                println!(
-                    "[{:?}] {:?} {:?} @ {:.2}",
-                    fill.symbol, fill.side, fill.qty, fill.price
-                );
-            }
-            MarketEvent::MarketClosed => {
-                println!("Market closed");
-            }
-        }
     }
 }
 
-/// ======================
-/// Example usage
-/// ======================
-
-fn main() {
+fn main() -> Result<(), Box<dyn Error>> {
     // Simulated mixed-asset feed (equities + crypto)
-    let market_data = vec![
-        MarketData {
-            symbol: Symbol("AAPL".into()),
-            asset_class: AssetClass::Equity,
-            price: 190.0,
-            time: 1,
-        },
-        MarketData {
-            symbol: Symbol("BTC-USD".into()),
-            asset_class: AssetClass::Crypto,
-            price: 60000.0,
-            time: 1,
-        },
-        MarketData {
-            symbol: Symbol("AAPL".into()),
-            asset_class: AssetClass::Equity,
-            price: 180.0,
-            time: 2,
-        },
-        MarketData {
-            symbol: Symbol("BTC-USD".into()),
-            asset_class: AssetClass::Crypto,
-            price: 63000.0,
-            time: 2,
-        },
-        MarketData {
-            symbol: Symbol("AAPL".into()),
-            asset_class: AssetClass::Equity,
-            price: 195.0,
-            time: 3,
-        },
-        MarketData {
-            symbol: Symbol("BTC-USD".into()),
-            asset_class: AssetClass::Crypto,
-            price: 59000.0,
-            time: 3,
-        },
-    ];
-
+    let (api_key, api_secret) = AlpacaData::get_alpaca_api("secrets.toml")?;
+    let alpaca = AlpacaData::new(&api_key, &api_secret);
+    let market_data = alpaca.get_historic(Symbol("BTC/USD".to_string()), 
+                                    AssetClass::Crypto, "2024-01-01", "2024-01-31", 
+                                    Interval::Day)?;
+    
     let trader = MeanReversionTrader {
-        target_symbol: Symbol("AAPL".into()),
-        asset_class: AssetClass::Equity,
+        target_symbol: Symbol("BTC/USD".into()),
+        asset_class: AssetClass::Crypto,
         last_price: None,
         open_orders: vec![]
     };
 
     let mut backtester = Backtester::new(trader, market_data, 10000.0);
     backtester.run();
+
+    Ok(())
 }

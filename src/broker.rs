@@ -53,6 +53,13 @@ impl Broker {
                 price: fill_price,
                 side: order.side.clone(),
             });
+            println!(
+                "[{:?}] {:?} {:?} @ {:.2}, Cash: {}",
+                fills[fills.len()-1].symbol, fills[fills.len()-1].side, 
+                fills[fills.len()-1].qty, fills[fills.len()-1].price,
+                self.cash
+            );
+
         }
         fills
     }
