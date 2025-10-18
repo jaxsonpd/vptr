@@ -3,7 +3,9 @@ mod broker;
 mod data;
 mod trader;
 
+use std::collections::HashMap;
 use std::error::Error;
+use std::future;
 
 use crate::data::{AlpacaData, AssetClass, DataStore, Interval, MarketData, MarketEvent, Order, OrderType, Side, Symbol};
 use crate::trader::Trader;
@@ -14,6 +16,7 @@ pub struct MeanReversionTrader {
     pub asset_class: AssetClass,
     pub last_price: Option<f64>,
     open_orders: Vec<Order>,
+    positions: HashMap<Symbol, f64>,
 }
 
 impl Trader for MeanReversionTrader {
@@ -27,13 +30,15 @@ impl Trader for MeanReversionTrader {
 
     fn tick(&mut self, data: Option<&MarketData>) {
         let data = data.unwrap();
+        let position = *self.positions.entry(data.symbol.clone()).or_insert(0.0);
+
 
         if data.symbol != self.target_symbol {
             return;
         }
 
         if let Some(prev) = self.last_price {
-            if data.price < prev * 0.95 {
+            if (data.price < prev * 0.95) && (position < 1.0) {
                 // Buy dip
                 self.open_orders.push(Order {
                     symbol: data.symbol.clone(),
@@ -43,12 +48,14 @@ impl Trader for MeanReversionTrader {
                 });
             } else if data.price > prev * 1.05 {
                 // Sell rally
-                self.open_orders.push(Order {
-                    symbol: data.symbol.clone(),
-                    qty: 1.0,
-                    side: Side::Sell,
-                    order_type: OrderType::Market,
-                });
+                if position > 0.0 {
+                    self.open_orders.push(Order {
+                        symbol: data.symbol.clone(),
+                        qty: position,
+                        side: Side::Sell,
+                        order_type: OrderType::Market,
+                    });
+                }
             }
         }
 
@@ -56,6 +63,22 @@ impl Trader for MeanReversionTrader {
     }
 
     fn on_event(&mut self, event: MarketEvent) {
+        match event {
+            MarketEvent::MarketClosed => {
+                println!("Market Closed!");
+            }
+            MarketEvent::OrderFilled(fill) => {
+                self.open_orders = vec![];
+                match fill.side {
+                    Side::Buy => {
+                        *self.positions.entry(fill.symbol).or_insert(0.0) += fill.qty;
+                    },
+                    Side::Sell => {
+                        *self.positions.entry(fill.symbol).or_insert(0.0) -= fill.qty;
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -64,14 +87,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (api_key, api_secret) = AlpacaData::get_alpaca_api("secrets.toml")?;
     let alpaca = AlpacaData::new(&api_key, &api_secret);
     let market_data = alpaca.get_historic(Symbol("BTC/USD".to_string()), 
-                                    AssetClass::Crypto, "2024-01-01", "2024-01-31", 
+                                    AssetClass::Crypto, "2024-01-01", "2024-12-31", 
                                     Interval::Day)?;
     
     let trader = MeanReversionTrader {
         target_symbol: Symbol("BTC/USD".into()),
         asset_class: AssetClass::Crypto,
         last_price: None,
-        open_orders: vec![]
+        open_orders: vec![],
+        positions: HashMap::new()
     };
 
     let mut backtester = Backtester::new(trader, market_data, 10000.0);
