@@ -15,8 +15,10 @@ pub struct MeanReversionTrader {
     pub target_symbol: Symbol,
     pub asset_class: AssetClass,
     pub last_price: Option<f64>,
+    num_ticks: i64,
     open_orders: Vec<Order>,
     positions: HashMap<Symbol, f64>,
+    mean_price: Option<f64>
 }
 
 impl Trader for MeanReversionTrader {
@@ -30,35 +32,26 @@ impl Trader for MeanReversionTrader {
 
     fn tick(&mut self, data: Option<&MarketData>) {
         let data = data.unwrap();
+        if data.symbol != self.target_symbol { return; }
         let position = *self.positions.entry(data.symbol.clone()).or_insert(0.0);
 
+        let mean_price = self.mean_price.unwrap_or(0.0);
 
-        if data.symbol != self.target_symbol {
-            return;
-        }
-
-        if let Some(prev) = self.last_price {
-            if (data.price < prev * 0.95) && (position < 1.0) {
-                // Buy dip
-                self.open_orders.push(Order {
-                    symbol: data.symbol.clone(),
-                    qty: 1.0,
-                    side: Side::Buy,
-                    order_type: OrderType::Market,
-                });
-            } else if data.price > prev * 1.05 {
-                // Sell rally
-                if position > 0.0 {
-                    self.open_orders.push(Order {
-                        symbol: data.symbol.clone(),
-                        qty: position,
-                        side: Side::Sell,
-                        order_type: OrderType::Market,
-                    });
-                }
+        if data.price < mean_price * 0.95 {
+            if position > 4.0 {
+                return;
             }
+            self.open_orders.push(Order { symbol: data.symbol.clone(), qty: 0.1, side: Side::Buy, order_type: OrderType::Market });
+        } else if data.price > mean_price * 0.95 {
+            if position < -4.0 {
+                return;
+            }
+            self.open_orders.push(Order { symbol: data.symbol.clone(), qty: 0.1, side: Side::Sell, order_type: OrderType::Market });
         }
 
+        self.mean_price = Some((mean_price * self.num_ticks as f64 + data.price) / (self.num_ticks as f64 + 1.0));
+
+        self.num_ticks += 1;
         self.last_price = Some(data.price);
     }
 
@@ -87,7 +80,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (api_key, api_secret) = AlpacaData::get_alpaca_api("secrets.toml")?;
     let alpaca = AlpacaData::new(&api_key, &api_secret);
     let market_data = alpaca.get_historic(Symbol("BTC/USD".to_string()), 
-                                    AssetClass::Crypto, "2024-01-01", "2024-12-31", 
+                                    AssetClass::Crypto, "2018-01-01", "2024-12-31", 
                                     Interval::Day)?;
     
     let trader = MeanReversionTrader {
@@ -95,7 +88,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         asset_class: AssetClass::Crypto,
         last_price: None,
         open_orders: vec![],
-        positions: HashMap::new()
+        positions: HashMap::new(),
+        mean_price: None,
+        num_ticks: 0
     };
 
     let mut backtester = Backtester::new(trader, market_data, 10000.0);
